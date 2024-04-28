@@ -1,0 +1,37 @@
+class A extends java.lang.Object
+{
+/*Test.java*/
+    A f;
+
+/*2*/
+    void <init>()
+    {
+        A r0;
+
+        r0 := @this: A;
+
+        specialinvoke r0.<java.lang.Object: void <init>()>();
+/*3*/
+
+        return;
+/*3*/
+    }
+
+/*5*/
+    void m1()
+    {
+        java.io.PrintStream $r0;
+        A r1;
+
+        r1 := @this: A;
+
+        $r0 = <java.lang.System: java.io.PrintStream out>;
+/*6*/
+
+        virtualinvoke $r0.<java.io.PrintStream: void println(java.lang.String)>("A:m1");
+/*6*/
+
+        return;
+/*7*/
+    }
+}

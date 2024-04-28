@@ -1,0 +1,137 @@
+class Test extends java.lang.Object
+{
+/*Test.java*/
+
+/*18*/
+    public static void main(java.lang.String[])
+    {
+        Test $r0;
+        java.io.PrintStream $r2;
+        java.lang.String[] r3;
+        int $i3, $i5, $i7;
+
+        r3 := @parameter0: java.lang.String[];
+
+        $r0 = new Test;
+/*19*/
+
+        specialinvoke $r0.<Test: void <init>()>();
+/*19*/
+
+        $r2 = <java.lang.System: java.io.PrintStream out>;
+/*20*/
+
+        $i3 = 5 + 6;
+/*26*/
+
+        $i7 = 0;
+/*31*/
+
+     label1:
+        if $i7 >= 10 goto label2;
+/*32*/
+
+        $i7 = $i7 + 5;
+/*33*/
+
+        goto label1;
+/*33*/
+
+     label2:
+        goto label3;
+
+     label3:
+        $i5 = $i3 + $i7;
+/*26*/
+
+        goto label4;
+
+     label4:
+        virtualinvoke $r2.<java.io.PrintStream: void println(int)>($i5);
+/*20*/
+
+        return;
+/*21*/
+    }
+
+/*22*/
+    void <init>()
+    {
+        Test r0;
+
+        r0 := @this: Test;
+
+        specialinvoke r0.<java.lang.Object: void <init>()>();
+/*23*/
+
+        return;
+/*23*/
+    }
+
+/*25*/
+    public int m1(int, int)
+    {
+        int i0, i1, $i2, i4, $i1;
+        Test r0;
+
+        r0 := @this: Test;
+
+        i0 := @parameter0: int;
+
+        i1 := @parameter1: int;
+
+        $i2 = i0 + i1;
+/*26*/
+
+        $i1 = 0;
+/*31*/
+
+     label1:
+        if $i1 >= 10 goto label2;
+/*32*/
+
+        $i1 = $i1 + i0;
+/*33*/
+
+        goto label1;
+/*33*/
+
+     label2:
+        goto label3;
+
+     label3:
+        i4 = $i2 + $i1;
+/*26*/
+
+        return i4;
+/*27*/
+    }
+
+/*30*/
+    public int m3(int)
+    {
+        int i0, i1;
+        Test r0;
+
+        r0 := @this: Test;
+
+        i0 := @parameter0: int;
+
+        i1 = 0;
+/*31*/
+
+     label1:
+        if i1 >= 10 goto label2;
+/*32*/
+
+        i1 = i1 + i0;
+/*33*/
+
+        goto label1;
+/*33*/
+
+     label2:
+        return i1;
+/*35*/
+    }
+}

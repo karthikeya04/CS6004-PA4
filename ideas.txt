@@ -1,0 +1,18 @@
+
+Ideas for testcases:
+
+* Scalar replacement also reduces memory usage(header's gone). Maybe create thousands of scalar replacable objects
+* Have many virtual methods in a class => virtual invoke becomes very costly => can easily show perf improvement by method inlining
+* Assumed constructors to be simple (no object args, no method calls, no side effects)
+
+
+
+
+
+
+
+
+
+
+Simplifying assumptions:
+* not considering arrays

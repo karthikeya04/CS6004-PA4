@@ -1,0 +1,37 @@
+class B extends A
+{
+/*Test.java*/
+    A g;
+
+/*9*/
+    void <init>()
+    {
+        B r0;
+
+        r0 := @this: B;
+
+        specialinvoke r0.<A: void <init>()>();
+/*10*/
+
+        return;
+/*10*/
+    }
+
+/*12*/
+    void m1()
+    {
+        java.io.PrintStream $r0;
+        B r1;
+
+        r1 := @this: B;
+
+        $r0 = <java.lang.System: java.io.PrintStream out>;
+/*13*/
+
+        virtualinvoke $r0.<java.io.PrintStream: void println(java.lang.String)>("B:m1");
+/*13*/
+
+        return;
+/*14*/
+    }
+}
