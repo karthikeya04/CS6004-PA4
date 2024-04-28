@@ -15,8 +15,14 @@ class B extends A {
 }
 
 class Test {
+    static A g;
     public static void main(String[] args) {
         Test t = new Test();
+        A a = new A();
+        a.f = new A();
+        g = a.f;
+        B b = new B();
+        a = b;
         System.out.println(t.m1(5, 6));
     }
 

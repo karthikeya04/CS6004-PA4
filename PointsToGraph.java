@@ -48,7 +48,9 @@ class PointsToGraph {
     HashSet<String> heapNodes;
     HashSet<String> globalNodes;
     HashSet<String> allNodes;
-    HashMap<String, String> objectTypes;
+    Boolean markedEscapingObjects = false;
+    static HashMap<String, RefType> objectTypes =
+        new HashMap<String, RefType>();
     // allNodes = dummyNodes U localNodes U heapNodes U globalNodes
     public PointsToGraph() {
         graph = new HashMap<String, HashMap<String, HashSet<String>>>();
@@ -58,7 +60,6 @@ class PointsToGraph {
         heapNodes = new HashSet<String>();
         globalNodes = new HashSet<String>();
         allNodes = new HashSet<String>();
-        objectTypes = new HashMap<String, String>();
     }
 
     public void Union(PointsToGraph ptg) {
@@ -79,7 +80,6 @@ class PointsToGraph {
         heapNodes.addAll(ptg.heapNodes);
         globalNodes.addAll(ptg.globalNodes);
         allNodes.addAll(ptg.allNodes);
-        objectTypes.putAll(ptg.objectTypes);
     }
 
     public PointsToGraph GetDeepCopy() {
@@ -97,7 +97,6 @@ class PointsToGraph {
         ptg.heapNodes.addAll(heapNodes);
         ptg.globalNodes.addAll(globalNodes);
         ptg.allNodes.addAll(allNodes);
-        ptg.objectTypes.putAll(objectTypes);
         return ptg;
     }
 
@@ -227,7 +226,7 @@ class PointsToGraph {
             // handled the same way
             String objectNode =
                 Integer.toString(u.getJavaSourceStartLineNumber());
-            objectTypes.put(objectNode, value.getType().toString());
+            objectTypes.put(objectNode, (RefType) value.getType());
             AddHeapNode(objectNode);
             nodes.add(objectNode);
         } else if (value instanceof NullType) {
@@ -243,16 +242,16 @@ class PointsToGraph {
         } else if (value instanceof StaticFieldRef) {
             if (!(value.getType() instanceof PrimType)) {
                 StaticFieldRef staticFieldRef = (StaticFieldRef) value;
-                String staticField = staticFieldRef.getField().toString();
-                String globalNode = "global_ln#"
-                    + u.getJavaSourceStartLineNumber() + "_" + staticField;
-                if (!globalNodes.contains(globalNode)) {
-                    AddGlobalNode(globalNode);
+                String staticNode = staticFieldRef.getField().toString();
+                if (!globalNodes.contains(staticNode)) {
+                    AddGlobalNode(staticNode);
                 }
-                if (isLeftOp) { // can only be in the rhs
-                    // nodes.add(globalNode);
+                if (isLeftOp) {
+                    nodes.add(staticNode);
                 } else {
-                    nodes.add(globalNode);
+                    if (graph.get(staticNode).containsKey(emptyEdge)) {
+                        nodes.addAll(graph.get(staticNode).get(emptyEdge));
+                    }
                 }
             }
 
@@ -275,18 +274,11 @@ class PointsToGraph {
             || value instanceof JStaticInvokeExpr
             || value instanceof JVirtualInvokeExpr) {
             // Note that affected arguments are handled in ProcessUnit itself
-            InvokeExpr invokeExpr = (InvokeExpr) value;
-            SootMethod method = invokeExpr.getMethod();
-            if (method.isJavaLibraryMethod()) {
-                String dummyNode =
-                    "@dummy_libcall_#" + u.getJavaSourceStartLineNumber();
-                // System.out.println(dummyNode);
-                if (!dummyNodes.contains(dummyNode))
-                    AddDummyNode(dummyNode);
-                nodes.add(dummyNode);
-            } else {
-                // handled in ProcessInvokeExpr()
-            }
+            String dummyNode = "dummy_#" + u.getJavaSourceStartLineNumber();
+            // System.out.println(dummyNode);
+            if (!dummyNodes.contains(dummyNode))
+                AddDummyNode(dummyNode);
+            nodes.add(dummyNode);
 
         } else if (value instanceof JDynamicInvokeExpr) {
         }
@@ -396,10 +388,10 @@ class PointsToGraph {
         escapingObjects.add(node);
         allNodes.add(node);
 
-        // String dummyNode = "@dummy_" + node;
-        // AddDummyNode(dummyNode);
+        String dummyNode = "@dummy_" + node;
+        AddDummyNode(dummyNode);
 
-        // ConnectTwoNodes(node, dummyNode, emptyEdge, true);
+        ConnectTwoNodes(node, dummyNode, emptyEdge, true);
     }
 
     public void AddDummyNode(String node) {
@@ -412,19 +404,33 @@ class PointsToGraph {
         escapingObjects.add(node);
     }
 
-    public List<Integer> GetEscapingObjects() {
+    // returns escaping concrete objects
+    public HashSet<String> GetAllEscapingObjs() {
+        markedEscapingObjects = true;
         HashSet<String> allEscapingObjects = new HashSet<String>();
-        for (String node : escapingObjects) {
-            AddReachableNodes(node, allEscapingObjects);
+        for (String node_ : escapingObjects) {
+            AddReachableNodes(node_, allEscapingObjects);
         }
-        List<Integer> lineNumbers = new ArrayList<Integer>();
+        escapingObjects.addAll(allEscapingObjects);
+        HashSet<String> ret = new HashSet<String>();
         for (String node : allEscapingObjects) {
             if (IsHeapNode(node)) {
-                lineNumbers.add(Integer.parseInt(node));
+                ret.add(node);
             }
         }
-        Collections.sort(lineNumbers);
-        return lineNumbers;
+        return ret;
+    }
+
+    public Boolean IsEscaping(String node) {
+        if (!markedEscapingObjects) {
+            HashSet<String> allEscapingObjects = new HashSet<String>();
+            for (String node_ : escapingObjects) {
+                AddReachableNodes(node_, allEscapingObjects);
+            }
+            escapingObjects.addAll(allEscapingObjects);
+            markedEscapingObjects = true;
+        }
+        return escapingObjects.contains(node);
     }
 
     public void AddReachableNodes(String node, HashSet<String> reachableNodes) {
@@ -446,82 +452,9 @@ class PointsToGraph {
         }
     }
 
-    public void MapNodes(PointsToGraph currInGraph, PointsToGraph calleePtg,
-        HashMap<String, HashSet<String>> dummyToConcrete) {
-        // Fill dummy nodes created by line# abstraction
-        HashSet<String> workList = new HashSet<String>();
-        for (String node : dummyToConcrete.keySet()) {
-            workList.add(node);
-        }
-        while (!workList.isEmpty()) {
-            String node = workList.iterator().next();
-            workList.remove(node);
-            if (!calleePtg.graph.containsKey(node)) {
-                continue;
-            }
-            for (String edge : calleePtg.graph.get(node).keySet()) {
-                for (String nextNode : calleePtg.graph.get(node).get(edge)) {
-                    if (!calleePtg.IsDummy(nextNode))
-                        continue;
-                    if (!dummyToConcrete.containsKey(nextNode)) {
-                        dummyToConcrete.put(nextNode, new HashSet<String>());
-                    }
-                    HashSet<String> prevSet =
-                        new HashSet<String>(dummyToConcrete.get(nextNode));
-                    HashSet<String> cNodes =
-                        new HashSet<String>(dummyToConcrete.get(node));
-                    for (String concreteNode : cNodes) {
-                        if (currInGraph.ContainsNode(
-                                concreteNode)) { // should be always true
-                            if (currInGraph.graph.get(concreteNode)
-                                    .containsKey(edge)) {
-                                for (String nextConcreteNode :
-                                    currInGraph.graph.get(concreteNode)
-                                        .get(edge)) {
-                                    dummyToConcrete.get(nextNode).add(
-                                        nextConcreteNode);
-                                }
-                            }
-                        }
-                    }
-                    if (!dummyToConcrete.get(nextNode).equals(prevSet)) {
-                        workList.add(nextNode);
-                    }
-                }
-            }
-        }
-
-        // add Edges
-        for (String node : calleePtg.graph.keySet()) {
-            HashSet<String> lNodes = new HashSet<String>();
-            if (calleePtg.IsDummy(node)) {
-                if (dummyToConcrete.containsKey(node)) {
-                    HashSet<String> nodes = dummyToConcrete.get(node);
-                    lNodes.addAll(nodes);
-                    AddHeapNodes(nodes);
-                }
-            } else {
-                lNodes.add(node);
-                AddHeapNode(node);
-            }
-            for (String edge : calleePtg.graph.get(node).keySet()) {
-                for (String nextNode : calleePtg.graph.get(node).get(edge)) {
-                    HashSet<String> rNodes = new HashSet<String>();
-                    if (calleePtg.IsDummy(nextNode)) {
-                        if (dummyToConcrete.containsKey(nextNode)) {
-                            HashSet<String> nodes =
-                                dummyToConcrete.get(nextNode);
-                            rNodes.addAll(nodes);
-                            AddHeapNodes(nodes);
-                        }
-                    } else {
-                        rNodes.add(nextNode);
-                        AddHeapNode(nextNode);
-                    }
-                    Connect(lNodes, rNodes, edge, false);
-                }
-            }
-        }
+    public HashSet<String> GetAllHeapNodes() {
+        HashSet<String> ret = new HashSet<String>(heapNodes);
+        return ret;
     }
 
     public HashSet<String> GetLocalNodes() {

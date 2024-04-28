@@ -1,60 +1,76 @@
 class Test extends java.lang.Object
 {
 /*Test.java*/
+    static A g;
 
-/*18*/
+/*19*/
     public static void main(java.lang.String[])
     {
-        Test $r0;
-        java.io.PrintStream $r2;
-        java.lang.String[] r3;
+        A $r3;
+        java.io.PrintStream $r7;
+        java.lang.String[] r8;
         int $i3, $i5, $i7;
 
-        r3 := @parameter0: java.lang.String[];
-
-        $r0 = new Test;
-/*19*/
-
-        specialinvoke $r0.<Test: void <init>()>();
-/*19*/
-
-        $r2 = <java.lang.System: java.io.PrintStream out>;
-/*20*/
-
-        $i3 = 5 + 6;
-/*26*/
-
-        $i7 = 0;
-/*31*/
-
-     label1:
-        if $i7 >= 10 goto label2;
-/*32*/
-
-        $i7 = $i7 + 5;
-/*33*/
+        r8 := @parameter0: java.lang.String[];
 
         goto label1;
-/*33*/
+
+     label1:
+        goto label2;
 
      label2:
+        $r3 = new A;
+/*22*/
+
+        specialinvoke $r3.<A: void <init>()>();
+/*22*/
+
+        <Test: A g> = $r3;
+/*23*/
+
         goto label3;
 
      label3:
-        $i5 = $i3 + $i7;
-/*26*/
-
         goto label4;
 
      label4:
-        virtualinvoke $r2.<java.io.PrintStream: void println(int)>($i5);
-/*20*/
+        $r7 = <java.lang.System: java.io.PrintStream out>;
+/*26*/
+
+        $i3 = 5 + 6;
+/*32*/
+
+        $i7 = 0;
+/*37*/
+
+     label5:
+        if $i7 >= 10 goto label6;
+/*38*/
+
+        $i7 = $i7 + 5;
+/*39*/
+
+        goto label5;
+/*39*/
+
+     label6:
+        goto label7;
+
+     label7:
+        $i5 = $i3 + $i7;
+/*32*/
+
+        goto label8;
+
+     label8:
+        virtualinvoke $r7.<java.io.PrintStream: void println(int)>($i5);
+/*26*/
 
         return;
-/*21*/
+/*27*/
     }
 
-/*22*/
+/*28*/
     void <init>()
     {
         Test r0;
@@ -62,13 +78,13 @@ class Test extends java.lang.Object
         r0 := @this: Test;
 
         specialinvoke r0.<java.lang.Object: void <init>()>();
-/*23*/
+/*29*/
 
         return;
-/*23*/
+/*29*/
     }
 
-/*25*/
+/*31*/
     public int m1(int, int)
     {
         int i0, i1, $i2, i4, $i1;
@@ -81,33 +97,33 @@ class Test extends java.lang.Object
         i1 := @parameter1: int;
 
         $i2 = i0 + i1;
-/*26*/
+/*32*/
 
         $i1 = 0;
-/*31*/
+/*37*/
 
      label1:
         if $i1 >= 10 goto label2;
-/*32*/
+/*38*/
 
         $i1 = $i1 + i0;
-/*33*/
+/*39*/
 
         goto label1;
-/*33*/
+/*39*/
 
      label2:
         goto label3;
 
      label3:
         i4 = $i2 + $i1;
-/*26*/
+/*32*/
 
         return i4;
-/*27*/
+/*33*/
     }
 
-/*30*/
+/*36*/
     public int m3(int)
     {
         int i0, i1;
@@ -118,20 +134,20 @@ class Test extends java.lang.Object
         i0 := @parameter0: int;
 
         i1 = 0;
-/*31*/
+/*37*/
 
      label1:
         if i1 >= 10 goto label2;
-/*32*/
+/*38*/
 
         i1 = i1 + i0;
-/*33*/
+/*39*/
 
         goto label1;
-/*33*/
+/*39*/
 
      label2:
         return i1;
-/*35*/
+/*41*/
     }
 }

@@ -9,6 +9,8 @@ public class AnalysisTransformer extends SceneTransformer {
     Set<SootMethod> processedMethods;
     static HashMap<String, MethodTransformer> Analyses =
         new HashMap<String, MethodTransformer>();
+    static HashMap<String, ConstructorTransformer> ConstrAnalyses =
+        new HashMap<String, ConstructorTransformer>();
 
     @Override
     protected synchronized void internalTransform(
@@ -48,10 +50,8 @@ public class AnalysisTransformer extends SceneTransformer {
         if (method.toString().contains("init")) {
             return;
         }
-        System.out.println("Analyzing method: " + method.toString());
         MethodTransformer analysis = new MethodTransformer(method);
-        analysis.Analyze();
+        analysis.Transform();
         Analyses.put(method.toString(), analysis);
-        System.out.println(method.getActiveBody());
     }
 }

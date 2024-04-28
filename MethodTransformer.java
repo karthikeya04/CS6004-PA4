@@ -3,6 +3,7 @@ import soot.*;
 import soot.javaToJimple.LocalGenerator;
 import soot.jimple.BinopExpr;
 import soot.jimple.CastExpr;
+import soot.jimple.Expr;
 import soot.jimple.InstanceOfExpr;
 import soot.jimple.InvokeExpr;
 import soot.jimple.Jimple;
@@ -19,12 +20,14 @@ import soot.jimple.internal.JInstanceFieldRef;
 import soot.jimple.internal.JInterfaceInvokeExpr;
 import soot.jimple.internal.JInvokeStmt;
 import soot.jimple.internal.JLookupSwitchStmt;
+import soot.jimple.internal.JNewExpr;
 import soot.jimple.internal.JNopStmt;
 import soot.jimple.internal.JReturnStmt;
 import soot.jimple.internal.JReturnVoidStmt;
 import soot.jimple.internal.JSpecialInvokeExpr;
 import soot.jimple.internal.JTableSwitchStmt;
 import soot.jimple.internal.JVirtualInvokeExpr;
+import soot.jimple.internal.JimpleLocal;
 import soot.jimple.toolkits.callgraph.Edge;
 import soot.toolkits.graph.*;
 import soot.toolkits.scalar.LiveLocals;
@@ -44,7 +47,7 @@ class MethodTransformer {
     private HashSet<Unit> workList;
     final private LocalGenerator localGenerator;
     final String methodKey;
-    int currentlocalIndex = 0;
+    final HashSet<String> nonReplaceableObjs;
 
     MethodTransformer(SootMethod method) {
         this.method = method;
@@ -56,12 +59,14 @@ class MethodTransformer {
         outGraph = new HashMap<Unit, PointsToGraph>();
         finalPtg = new PointsToGraph();
         liveLocals = new SimpleLiveLocals(unitGraph);
+        nonReplaceableObjs = new HashSet<String>();
         String className = method.getDeclaringClass().getName();
         String methodName = method.getName();
         methodKey = className + ":" + methodName;
     }
 
-    public void Analyze() {
+    public void Transform() {
+        System.out.println("Analyzing method: " + method.toString());
         workList = new HashSet<Unit>(units);
         while (!workList.isEmpty()) {
             Unit u = workList.iterator().next();
@@ -87,24 +92,8 @@ class MethodTransformer {
         for (Unit u : unitGraph.getTails()) {
             finalPtg.Union(outGraph.get(u));
         }
-
-        // System.out.println(body);
-        // inline virtual methods at monomorphic call sites
-        // TODO: figure out how to do this
-        // for (Unit u : units) {
-        //     if (u instanceof JInvokeStmt) {
-        //         JInvokeStmt jInvokeStmt = (JInvokeStmt) u;
-        //         InvokeExpr invokeExpr = jInvokeStmt.getInvokeExpr();
-        //         if (invokeExpr instanceof JVirtualInvokeExpr) {
-        //             JVirtualInvokeExpr jVirtualInvokeExpr =
-        //                 (JVirtualInvokeExpr) invokeExpr;
-        //             Value base = jVirtualInvokeExpr.getBase();
-        //             Local baseLocal = (Local) base;
-        //             SootClass baseClass =
-        //                 ((RefType) baseLocal.getType()).getSootClass();
-        //         }
-        //     }
-        // }
+        DoScalarReplacement();
+        System.out.println(method.getActiveBody());
     }
 
     private void ProcessUnit(Unit u, HashMap<Unit, PointsToGraph> inGraph,
@@ -116,8 +105,6 @@ class MethodTransformer {
             if (rightOp instanceof InvokeExpr) {
                 InvokeExpr invokeExpr = (InvokeExpr) rightOp;
                 if (!invokeExpr.getMethodRef().isConstructor()) {
-                    // staticInvoke + dynamicInvoke +
-                    // other instanceInvokes
                     if (!invokeExpr.getMethod().isJavaLibraryMethod()) {
                         if (invokeExpr instanceof JVirtualInvokeExpr) {
                             int numTargets = 0;
@@ -127,7 +114,7 @@ class MethodTransformer {
                                 numTargets++;
                                 itr.next();
                             }
-                            System.out.println(u + " --- " + numTargets);
+                            // System.out.println(u + " --- " + numTargets);
                             if (numTargets == 1) { // monomorphic callsite
                                 SootMethod targetMethod =
                                     AnalysisTransformer.cg.edgesOutOf(u)
@@ -143,9 +130,27 @@ class MethodTransformer {
                                 return;
                             }
                         }
-                        ProcessInvokeExpr(u, invokeExpr);
-                        return;
                     }
+                    ProcessAssignLikeUnit(u);
+                    PointsToGraph currOutGraph = outGraph.get(u);
+                    HashSet<String> escapingObjs = new HashSet<>();
+                    for (Value value : invokeExpr.getArgs()) {
+                        escapingObjs.addAll(
+                            currOutGraph.GetAllPointsToNodes(value, u, false));
+                    }
+                    if (invokeExpr instanceof JInterfaceInvokeExpr
+                        || invokeExpr instanceof JSpecialInvokeExpr
+                        || invokeExpr instanceof JVirtualInvokeExpr) {
+                        AbstractInstanceInvokeExpr instanceInvokeExpr =
+                            (AbstractInstanceInvokeExpr) invokeExpr;
+                        Value base = instanceInvokeExpr.getBase();
+                        escapingObjs.addAll(
+                            currOutGraph.GetAllPointsToNodes(base, u, false));
+                    }
+                    currOutGraph.MarkAsEscaping(escapingObjs);
+                    outGraph.put(u, currOutGraph);
+
+                    return;
                 }
             } else {
                 ProcessAssignLikeUnit(u);
@@ -167,12 +172,7 @@ class MethodTransformer {
             HashSet<String> nodes =
                 currInGraph.GetAllPointsToNodes(op, u, false);
             currOutGraph = currInGraph.GetDeepCopy();
-            String retNode = PointsToGraph.GetReturnNode();
-            if (!currOutGraph.graph.containsKey(retNode)) {
-                currOutGraph.AddDummyNode(retNode);
-            }
-            currOutGraph.Connect(
-                retNode, nodes, PointsToGraph.emptyEdge, false);
+            currOutGraph.MarkAsEscaping(nodes);
             inGraph.put(u, currInGraph);
             outGraph.put(u, currOutGraph);
             return;
@@ -208,9 +208,27 @@ class MethodTransformer {
                             return;
                         }
                     }
-                    ProcessInvokeExpr(u, invokeExpr);
-                    return;
                 }
+                PointsToGraph currInGraph = inGraph.get(u);
+                HashSet<String> escapingObjs = new HashSet<>();
+                for (Value value : invokeExpr.getArgs()) {
+                    escapingObjs.addAll(
+                        currInGraph.GetAllPointsToNodes(value, u, false));
+                }
+                if (invokeExpr instanceof JInterfaceInvokeExpr
+                    || invokeExpr instanceof JSpecialInvokeExpr
+                    || invokeExpr instanceof JVirtualInvokeExpr) {
+                    AbstractInstanceInvokeExpr instanceInvokeExpr =
+                        (AbstractInstanceInvokeExpr) invokeExpr;
+                    Value base = instanceInvokeExpr.getBase();
+                    escapingObjs.addAll(
+                        currInGraph.GetAllPointsToNodes(base, u, false));
+                }
+                PointsToGraph currOutGraph = currInGraph.GetDeepCopy();
+                currOutGraph.MarkAsEscaping(escapingObjs);
+                inGraph.put(u, currInGraph);
+                outGraph.put(u, currOutGraph);
+                return;
             }
         } else if (u instanceof JNopStmt) {
         } else if (u instanceof JBreakpointStmt) { // not relevant for
@@ -220,105 +238,6 @@ class MethodTransformer {
             // Handle JIfStmt
         }
         outGraph.put(u, inGraph.get(u).GetDeepCopy());
-    }
-
-    private void ProcessInvokeExpr(Unit u, InvokeExpr invokeExpr) {
-        Boolean isInAssgnStmt;
-        if (u instanceof JAssignStmt) {
-            isInAssgnStmt = true;
-        } else {
-            isInAssgnStmt = false;
-        }
-        PointsToGraph currInGraph = inGraph.get(u);
-        PointsToGraph currOutGraph = currInGraph.GetDeepCopy();
-        for (Iterator<Edge> it = AnalysisTransformer.cg.edgesOutOf(u);
-             it.hasNext();) {
-            Edge cgEdge = it.next();
-            SootMethod callee = cgEdge.tgt().method();
-            MethodTransformer calleeAnalysis =
-                AnalysisTransformer.Analyses.get(callee.toString());
-            // System.out.println(AnalysisTransformer.Analyses + " " + callee);
-            PointsToGraph calleeFinalPtg = calleeAnalysis.GetFinalPtg();
-            calleeFinalPtg.RemoveLocals(); // can have dummy, heap, global nodes
-
-            // --------- Mapping algo -----------
-
-            // 1. replace param dummy nodes(along with this) with concrete
-            // nodes
-            PointsToGraph ptg = new PointsToGraph();
-            HashMap<String, HashSet<String>> dummyToConcrete =
-                new HashMap<String, HashSet<String>>();
-            List<Value> args = invokeExpr.getArgs();
-            for (int i = 0; i < args.size(); i++) {
-                Value arg = args.get(i);
-                HashSet<String> argNodes =
-                    currInGraph.GetAllPointsToNodes(arg, u, false);
-                String dummyNode = PointsToGraph.GetParamDummyNode(i);
-                dummyToConcrete.put(dummyNode, argNodes);
-            }
-            if (invokeExpr instanceof JInterfaceInvokeExpr
-                || invokeExpr instanceof JSpecialInvokeExpr
-                || invokeExpr instanceof JVirtualInvokeExpr) {
-                AbstractInstanceInvokeExpr instanceInvokeExpr =
-                    (AbstractInstanceInvokeExpr) invokeExpr;
-                Value base = instanceInvokeExpr.getBase();
-                String thisNode = PointsToGraph.GetThisDummyNode();
-                HashSet<String> baseNodes =
-                    currInGraph.GetAllPointsToNodes(base, u, false);
-                dummyToConcrete.put(thisNode, baseNodes);
-            }
-
-            // 2. add edges in ptg using dummyToConcrete &
-            // calleeFinalPtg
-            // It handles all kind of edges (dummy-dummy, dummy-concrete,
-            // concrete-concret)
-            ptg.MapNodes(currInGraph, calleeFinalPtg, dummyToConcrete);
-
-            // 3. add edges from returnNode in ptg
-            String retNode = PointsToGraph.GetReturnNode();
-            HashSet<String> retDNodes =
-                calleeFinalPtg.GetAllPointsToNodes(retNode);
-            HashSet<String> retCNodes = new HashSet<String>();
-            for (String retDNode : retDNodes) {
-                if (calleeFinalPtg.IsHeapNode(retDNode)) {
-                    retCNodes.add(retDNode);
-                } else if (dummyToConcrete.containsKey(retDNode)) {
-                    retCNodes.addAll(dummyToConcrete.get(retDNode));
-                }
-            }
-            ptg.AddDummyNode(retNode);
-            for (String node : retCNodes) {
-                ptg.AddHeapNode(node);
-            }
-            ptg.Connect(retNode, retCNodes, PointsToGraph.emptyEdge, false);
-
-            // 4. If isInAssignStmt, add edges from leftOp to retNode
-            // pointees
-            if (isInAssgnStmt) {
-                JAssignStmt assignStmt = (JAssignStmt) u;
-                Value leftOp = assignStmt.getLeftOp();
-                HashSet<String> lNodes =
-                    currInGraph.GetAllPointsToNodes(leftOp, u, true);
-                for (String node : lNodes) {
-                    if (currInGraph.IsHeapNode(node)) {
-                        ptg.AddHeapNode(node);
-                    } else if (currInGraph.IsLocalNode(node)) {
-                        ptg.AddLocalNode(node);
-                    } else if (currInGraph.IsDummy(node)) {
-                        ptg.AddDummyNode(node);
-                    } else if (currInGraph.IsGlobalNode(node)) {
-                        ptg.AddGlobalNode(node);
-                    }
-                }
-                ptg.Connect(lNodes, retCNodes, PointsToGraph.emptyEdge, false);
-            }
-
-            // 5. final steps
-            ptg.RemoveNode(retNode);
-            currOutGraph.Union(ptg);
-        }
-        inGraph.put(u, currInGraph);
-        outGraph.put(u, currOutGraph);
     }
 
     private void ProcessAssignLikeUnit(
@@ -357,13 +276,14 @@ class MethodTransformer {
     }
 
     void inlineMethod(Unit u, SootMethod targetMethod) {
-        JVirtualInvokeExpr jVirtualInvokeExpr;
+        AbstractInstanceInvokeExpr instInvokeExpr;
+        Boolean isConstructor = targetMethod.isConstructor();
         if (u instanceof JAssignStmt) {
             Value rightOp = ((JAssignStmt) u).getRightOp();
             if (rightOp instanceof InvokeExpr) {
                 InvokeExpr invokeExpr = (InvokeExpr) rightOp;
-                if (invokeExpr instanceof JVirtualInvokeExpr) {
-                    jVirtualInvokeExpr = (JVirtualInvokeExpr) invokeExpr;
+                if (invokeExpr instanceof AbstractInstanceInvokeExpr) {
+                    instInvokeExpr = (AbstractInstanceInvokeExpr) invokeExpr;
                 } else {
                     throw new RuntimeException("Not a virtual Invoke");
                 }
@@ -372,25 +292,34 @@ class MethodTransformer {
             }
         } else if (u instanceof JInvokeStmt) {
             InvokeExpr invokeExpr = ((JInvokeStmt) u).getInvokeExpr();
-            if (invokeExpr instanceof JVirtualInvokeExpr) {
-                jVirtualInvokeExpr = (JVirtualInvokeExpr) invokeExpr;
+            if (invokeExpr instanceof AbstractInstanceInvokeExpr) {
+                instInvokeExpr = (AbstractInstanceInvokeExpr) invokeExpr;
             } else {
                 throw new RuntimeException("Not a virtual Invoke");
             }
         } else {
             throw new RuntimeException("Not an invoke Expression");
         }
-        Body targetBody =
-            (Body) AnalysisTransformer.Analyses.get(targetMethod.toString())
-                .body.clone();
+        // System.out.println(AnalysisTransformer.Analyses.keySet());
+        // System.out.println(targetMethod);
+        Body targetBody = null;
+        if (isConstructor) {
+            targetBody = (Body) AnalysisTransformer.ConstrAnalyses
+                             .get(targetMethod.toString())
+                             .body.clone();
+        } else {
+            targetBody =
+                (Body) AnalysisTransformer.Analyses.get(targetMethod.toString())
+                    .body.clone();
+        }
         PatchingChain<Unit> targetUnits = targetBody.getUnits();
         PatchingChain<Unit> newUnits =
             new PatchingChain<Unit>(new HashChain<>());
         HashMap<String, Local> localsMapping = new HashMap<String, Local>();
         List<Local> parameterLocals = targetBody.getParameterLocals();
-        List<Value> args = jVirtualInvokeExpr.getArgs();
+        List<Value> args = instInvokeExpr.getArgs();
         Local thisLocal = targetBody.getThisLocal();
-        Local base = (Local) jVirtualInvokeExpr.getBase();
+        Local base = (Local) instInvokeExpr.getBase();
         localsMapping.put(thisLocal.toString(), base);
         for (int i = 0; i < args.size(); i++) {
             Local param = parameterLocals.get(i);
@@ -470,6 +399,19 @@ class MethodTransformer {
             }
         }
 
+        // handle "return" target units in goto stmts
+        for (Unit tu : targetUnits) {
+            if (tu instanceof JGotoStmt) {
+                JGotoStmt jGotoStmt = (JGotoStmt) tu;
+                Unit tgt = jGotoStmt.getTarget();
+                if (tgt instanceof JReturnStmt
+                    || tgt instanceof JReturnVoidStmt) {
+                    if (retUnitsMapping.containsKey(tgt)) {
+                        jGotoStmt.setTarget(retUnitsMapping.get(tgt));
+                    }
+                }
+            }
+        }
         // remove u from units and add all new units to the worklist & units
         units.insertAfter(newUnits, u);
         units.remove(u);
@@ -479,7 +421,7 @@ class MethodTransformer {
     // renames the local using the mapping given and returns true if the
     // unit can be added to the newUnits set Note: It doesn't process return and
     // if statements' target unit (handled in inlineMethod itself)
-    private Boolean ProcessUnitForRenaming(
+    static Boolean ProcessUnitForRenaming(
         Unit u, HashMap<String, Local> localsMapping) {
         if (u instanceof JAssignStmt) {
             JAssignStmt jAssignStmt = (JAssignStmt) u;
@@ -548,7 +490,10 @@ class MethodTransformer {
         } else if (u instanceof JGotoStmt) {
             // JGotoStmt jGotoStmt = (JGotoStmt) u;
             // Unit tgt = jGotoStmt.getTarget();
-            // ProcessUnitForRenaming(tgt, localsMapping);
+            // if (tgt instanceof JReturnStmt || tgt instanceof JReturnVoidStmt)
+            // {
+            //     return false;
+            // }
         } else if (u instanceof JIdentityStmt) {
             // $r0 = this, and $r0 = param stmts
             // no need to bother about $r0 = this kind of stmts because it's
@@ -585,16 +530,15 @@ class MethodTransformer {
         return true;
     }
 
-    private void RenameInvokeExpr(
+    static void RenameInvokeExpr(
         InvokeExpr invokeExpr, HashMap<String, Local> localsMapping) {
-        if (invokeExpr instanceof JVirtualInvokeExpr) {
-            JVirtualInvokeExpr jVirtualInvokeExpr =
-                (JVirtualInvokeExpr) invokeExpr;
-            Value base = jVirtualInvokeExpr.getBase();
+        if (invokeExpr instanceof AbstractInstanceInvokeExpr) {
+            AbstractInstanceInvokeExpr instInvokeExpr =
+                (AbstractInstanceInvokeExpr) invokeExpr;
+            Value base = instInvokeExpr.getBase();
             if (base instanceof Local) {
                 Local baseLocal = (Local) base;
-                jVirtualInvokeExpr.setBase(
-                    localsMapping.get(baseLocal.toString()));
+                instInvokeExpr.setBase(localsMapping.get(baseLocal.toString()));
             }
         }
         List<Value> args = invokeExpr.getArgs();
@@ -606,11 +550,352 @@ class MethodTransformer {
             }
         }
     }
+
+    private void DoScalarReplacement() {
+        HashSet<String> allHeapNodes = finalPtg.GetAllHeapNodes();
+        HashSet<String> allEscapingObjs = finalPtg.GetAllEscapingObjs();
+        nonReplaceableObjs.addAll(allEscapingObjs);
+
+        for (Unit u : units) {
+            if (u instanceof JAssignStmt) {
+                JAssignStmt jAssignStmt = (JAssignStmt) u;
+                ProcessValue(jAssignStmt.getRightOp(), nonReplaceableObjs);
+            } else if (u instanceof JIdentityStmt) {
+            } else if (u instanceof JReturnStmt) {
+            } else if (u instanceof JGotoStmt) {
+            } else if (u instanceof JReturnVoidStmt) {
+            } else if (u instanceof JTableSwitchStmt) {
+            } else if (u instanceof JInvokeStmt) {
+            } else if (u instanceof JNopStmt) {
+            } else if (u instanceof JBreakpointStmt) {
+            } else if (u instanceof JLookupSwitchStmt) {
+            } else if (u instanceof JIfStmt) {
+                JIfStmt jIfStmt = (JIfStmt) u;
+                Value condition = jIfStmt.getCondition();
+                ProcessValue(condition, nonReplaceableObjs);
+            }
+        }
+
+        for (String node : allHeapNodes) {
+            if (!nonReplaceableObjs.contains(node)) {
+                ScalarReplace(node);
+            }
+        }
+    }
+
+    private void ProcessValue(Value value, HashSet<String> nonReplaceableObjs) {
+        if (value instanceof Expr) {
+            Expr expr = (Expr) value;
+            if (expr instanceof BinopExpr) {
+                BinopExpr binopExpr = (BinopExpr) expr;
+                Value op1 = binopExpr.getOp1();
+                Value op2 = binopExpr.getOp2();
+                nonReplaceableObjs.addAll(
+                    finalPtg.GetAllPointsToNodes(op1, null, false));
+                nonReplaceableObjs.addAll(
+                    finalPtg.GetAllPointsToNodes(op2, null, false));
+            } else if (expr instanceof CastExpr) {
+                CastExpr castExpr = (CastExpr) expr;
+                Value op = castExpr.getOp();
+                MarkReachableAsNonReplaceable(op, nonReplaceableObjs);
+            } else if (expr instanceof InstanceOfExpr) {
+                InstanceOfExpr instanceOfExpr = (InstanceOfExpr) expr;
+                Value op = instanceOfExpr.getOp();
+                MarkReachableAsNonReplaceable(op, nonReplaceableObjs);
+            }
+        }
+    }
+
+    private void ScalarReplace(String node) {
+        assert (finalPtg.IsHeapNode(node));
+        RefType refType = PointsToGraph.objectTypes.get(node);
+        SootClass sootClass = refType.getSootClass();
+        Unit instUnit = null; // instantiation unit
+        Iterator<Unit> unitItr = units.iterator();
+        while (unitItr.hasNext()) {
+            Unit u = unitItr.next();
+            if (u instanceof JAssignStmt) {
+                JAssignStmt jAssignStmt = (JAssignStmt) u;
+                Value leftOp = jAssignStmt.getLeftOp();
+                Value rightOp = jAssignStmt.getRightOp();
+                if (rightOp instanceof JNewExpr) {
+                    String objNode =
+                        Integer.toString(u.getJavaSourceStartLineNumber());
+                    if (objNode.equals(node)) {
+                        instUnit = u;
+                        break;
+                    }
+                }
+            }
+        }
+        Unit constrUnit = unitItr.next();
+        JInvokeStmt cInvokeStmt = (JInvokeStmt) constrUnit;
+        JSpecialInvokeExpr cInvokeExpr =
+            (JSpecialInvokeExpr) cInvokeStmt.getInvokeExpr();
+        SootMethod targetMethod = cInvokeExpr.getMethod();
+        if (!AnalysisTransformer.ConstrAnalyses.containsKey(
+                targetMethod.toString())) {
+            ConstructorTransformer analysis =
+                new ConstructorTransformer(targetMethod);
+            analysis.Transform();
+            AnalysisTransformer.ConstrAnalyses.put(
+                targetMethod.toString(), analysis);
+        }
+        inlineMethod(constrUnit, targetMethod);
+        HashMap<String, Local> fieldMapping = new HashMap<String, Local>();
+        for (SootField field : sootClass.getFields()) {
+            Local fLocal = getNewLocal(field.getType());
+            fieldMapping.put(field.toString(), fLocal);
+        }
+        List<Unit> toRemove = new ArrayList<Unit>();
+        for (Unit u : units) {
+            if (u instanceof JAssignStmt) {
+                JAssignStmt jAssignStmt = (JAssignStmt) u;
+                Value leftOp = jAssignStmt.getLeftOp();
+                Value rightOp = jAssignStmt.getRightOp();
+                Local srl = GetLocalForSR(leftOp, u, node, fieldMapping);
+                if (srl != null) {
+                    jAssignStmt.setLeftOp(srl);
+                }
+                srl = GetLocalForSR(rightOp, u, node, fieldMapping);
+                if (srl != null) {
+                    jAssignStmt.setRightOp(srl);
+                }
+
+                if (rightOp instanceof InvokeExpr) {
+                    InvokeExpr invokeExpr = (InvokeExpr) rightOp;
+                    List<Value> args = invokeExpr.getArgs();
+                    for (int i = 0; i < args.size(); i++) {
+                        Value arg = args.get(i);
+                        srl = GetLocalForSR(arg, u, node, fieldMapping);
+                        if (srl != null) {
+                            invokeExpr.setArg(i, srl);
+                        }
+                    }
+                }
+                if (rightOp instanceof Local) {
+                    HashSet<String> objs =
+                        finalPtg.GetAllPointsToNodes(rightOp, u, false);
+                    if (objs.size() == 1) {
+                        String obj = objs.iterator().next();
+                        if (!nonReplaceableObjs.contains(obj)) {
+                            toRemove.add(u);
+                        }
+                    }
+                }
+            } else if (u instanceof JIdentityStmt) {
+            } else if (u instanceof JReturnStmt) {
+                JReturnStmt jReturnStmt = (JReturnStmt) u;
+                Value op = jReturnStmt.getOp();
+                Local srl = GetLocalForSR(op, u, node, fieldMapping);
+                if (srl != null) {
+                    jReturnStmt.setOp(srl);
+                }
+            } else if (u instanceof JGotoStmt) {
+            } else if (u instanceof JReturnVoidStmt) {
+            } else if (u instanceof JTableSwitchStmt) {
+            } else if (u instanceof JInvokeStmt) {
+                JInvokeStmt jInvokeStmt = (JInvokeStmt) u;
+                InvokeExpr invokeExpr = jInvokeStmt.getInvokeExpr();
+                List<Value> args = invokeExpr.getArgs();
+                for (int i = 0; i < args.size(); i++) {
+                    Value arg = args.get(i);
+                    Local srl = GetLocalForSR(arg, u, node, fieldMapping);
+                    if (srl != null) {
+                        invokeExpr.setArg(i, srl);
+                    }
+                }
+            } else if (u instanceof JNopStmt) {
+            } else if (u instanceof JBreakpointStmt) {
+            } else if (u instanceof JLookupSwitchStmt) {
+            } else if (u instanceof JIfStmt) {
+                JIfStmt jIfStmt = (JIfStmt) u;
+                Value condition = jIfStmt.getCondition();
+                if (condition instanceof BinopExpr) {
+                    BinopExpr binopExpr = (BinopExpr) condition;
+                    Value op1 = binopExpr.getOp1();
+                    Value op2 = binopExpr.getOp2();
+                    Local srl = GetLocalForSR(op1, u, node, fieldMapping);
+                    if (srl != null) {
+                        binopExpr.setOp1(srl);
+                    }
+                    srl = GetLocalForSR(op2, u, node, fieldMapping);
+                    if (srl != null) {
+                        binopExpr.setOp2(srl);
+                    }
+                }
+            }
+        }
+        for (Unit u : toRemove) {
+            units.remove(u);
+        }
+        units.remove(instUnit);
+    }
+
+    private Local GetLocalForSR(
+        Value value, Unit u, String node, HashMap<String, Local> fieldMapping) {
+        if (value instanceof JInstanceFieldRef) {
+            JInstanceFieldRef jInstanceFieldRef = (JInstanceFieldRef) value;
+            HashSet<String> objs =
+                inGraph.get(u).GetAllPointsToNodes(value, u, true);
+            if (objs.size() == 1) {
+                String obj = objs.iterator().next();
+                if (obj.equals(node)) {
+                    return fieldMapping.get(
+                        jInstanceFieldRef.getField().toString());
+                }
+            }
+        }
+        return null;
+    }
+    private void MarkReachableAsNonReplaceable(
+        Value value, HashSet<String> nonReplaceableObjs) {
+        // TODO: potential for nullptr exception
+        nonReplaceableObjs.addAll(
+            finalPtg.GetAllPointsToNodes(value, null, false));
+    }
+
     private Local getNewLocal(Type type) {
         return localGenerator.generateLocal(type);
     }
 
     public PointsToGraph GetFinalPtg() {
         return finalPtg.GetDeepCopy();
+    }
+}
+
+// lightweight transformer
+// Used only while scalar replacing objects
+class ConstructorTransformer {
+    final SootMethod method;
+    final Body body;
+    final PatchingChain<Unit> units;
+    UnitGraph unitGraph; // shouldn't be final because it changes everytime you
+                         // inline a method
+    final private LocalGenerator localGenerator;
+
+    ConstructorTransformer(SootMethod method) {
+        this.method = method;
+        body = (Body) method.getActiveBody().clone();
+        localGenerator = new LocalGenerator(body);
+        units = body.getUnits();
+        unitGraph = new BriefUnitGraph(body);
+    }
+
+    void Transform() {
+        Unit javaObjUnit = null;
+        Unit reqUnit = null;
+        SootMethod targetMethod = null;
+        for (Unit u : units) {
+            if (u instanceof JInvokeStmt) {
+                JInvokeStmt jInvokeStmt = (JInvokeStmt) u;
+                if (jInvokeStmt.getInvokeExpr() instanceof JSpecialInvokeExpr) {
+                    JSpecialInvokeExpr invokeExpr =
+                        (JSpecialInvokeExpr) (jInvokeStmt.getInvokeExpr());
+                    targetMethod = invokeExpr.getMethod();
+                    if (targetMethod.getDeclaringClass().isApplicationClass()) {
+                        if (!AnalysisTransformer.ConstrAnalyses.containsKey(
+                                targetMethod.toString())) {
+                            ConstructorTransformer analysis =
+                                new ConstructorTransformer(targetMethod);
+                            analysis.Transform();
+                            AnalysisTransformer.ConstrAnalyses.put(
+                                targetMethod.toString(), analysis);
+                        }
+                        reqUnit = u;
+                    } else {
+                        javaObjUnit = u;
+                    }
+                    break;
+                }
+            }
+        }
+        if (reqUnit != null) {
+            inlineConstr(reqUnit, targetMethod);
+            unitGraph = new BriefUnitGraph(body);
+        }
+        if (javaObjUnit != null) {
+            units.remove(javaObjUnit);
+        }
+    }
+
+    void inlineConstr(Unit u, SootMethod targetMethod) {
+        JInvokeStmt jInvokeStmt = (JInvokeStmt) u;
+        JSpecialInvokeExpr invokeExpr =
+            (JSpecialInvokeExpr) (jInvokeStmt.getInvokeExpr());
+        Body targetBody = (Body) AnalysisTransformer.ConstrAnalyses
+                              .get(targetMethod.toString())
+                              .body.clone();
+
+        PatchingChain<Unit> targetUnits = targetBody.getUnits();
+        PatchingChain<Unit> newUnits =
+            new PatchingChain<Unit>(new HashChain<>());
+        HashMap<String, Local> localsMapping = new HashMap<String, Local>();
+        List<Local> parameterLocals = targetBody.getParameterLocals();
+        List<Value> args = invokeExpr.getArgs();
+        Local thisLocal = targetBody.getThisLocal();
+        Local base = (Local) invokeExpr.getBase();
+        localsMapping.put(thisLocal.toString(), base);
+        for (int i = 0; i < args.size(); i++) {
+            Local param = parameterLocals.get(i);
+            Value arg = args.get(i);
+            Local pLocal = getNewLocal(param.getType());
+            // pass by value
+            newUnits.add(Jimple.v().newAssignStmt(pLocal, arg));
+            localsMapping.put(param.toString(), pLocal);
+        }
+        for (Local local : targetBody.getLocals()) {
+            if (!localsMapping.containsKey(local.toString())) {
+                localsMapping.put(
+                    local.toString(), getNewLocal(local.getType()));
+            }
+        }
+        // System.out.println(u + " " + method);
+        // System.out.println(units);
+        Unit uSucc = units.getSuccOf(u);
+        System.out.println(" ------ " + uSucc);
+        HashMap<Unit, Unit> retUnitsMapping = new HashMap<Unit, Unit>();
+        for (Unit tu : targetUnits) {
+            if (MethodTransformer.ProcessUnitForRenaming(tu, localsMapping)) {
+                newUnits.add(tu);
+            }
+            if (tu instanceof JReturnVoidStmt) {
+                Unit endUnit = Jimple.v().newGotoStmt(uSucc);
+                newUnits.add(endUnit);
+                retUnitsMapping.put(tu, endUnit);
+            }
+        }
+
+        // handle "return" target units in if stmts
+        for (Unit tu : targetUnits) {
+            if (tu instanceof JIfStmt) {
+                JIfStmt jIfStmt = (JIfStmt) tu;
+                Unit tgt = jIfStmt.getTarget();
+                if (retUnitsMapping.containsKey(tgt)) {
+                    jIfStmt.setTarget(retUnitsMapping.get(tgt));
+                }
+            }
+        }
+
+        // handle "return" target units in goto stmts
+        for (Unit tu : targetUnits) {
+            if (tu instanceof JGotoStmt) {
+                JGotoStmt jGotoStmt = (JGotoStmt) tu;
+                Unit tgt = jGotoStmt.getTarget();
+                if (tgt instanceof JReturnStmt
+                    || tgt instanceof JReturnVoidStmt) {
+                    if (retUnitsMapping.containsKey(tgt)) {
+                        jGotoStmt.setTarget(retUnitsMapping.get(tgt));
+                    }
+                }
+            }
+        }
+        // remove u from units and add all new units to the worklist & units
+        units.insertAfter(newUnits, u);
+        units.remove(u);
+    }
+
+    private Local getNewLocal(Type type) {
+        return localGenerator.generateLocal(type);
     }
 }

@@ -2,3 +2,8 @@
 * can return statement in jimple be like "return $r0.f"? Assumed it's always like "return $r0"
     - In inlineMethod, In for (Unit tu : targetUnits) { loop
         - added a TODO
+
+
+* a.f = 
+*  = a.f
+* a = b
