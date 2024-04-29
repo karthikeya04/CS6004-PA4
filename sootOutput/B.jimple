@@ -1,9 +1,10 @@
 class B extends A
 {
 /*Test.java*/
-    A g;
+    Node bf;
+    A bg;
 
-/*9*/
+/*23*/
     void <init>()
     {
         B r0;
@@ -11,27 +12,52 @@ class B extends A
         r0 := @this: B;
 
         specialinvoke r0.<A: void <init>()>();
-/*10*/
+/*24*/
 
         return;
-/*10*/
+/*24*/
     }
 
-/*12*/
-    void m1()
+/*27*/
+    int m1()
     {
-        java.io.PrintStream $r0;
-        B r1;
+        B r0;
 
-        r1 := @this: B;
+        r0 := @this: B;
 
-        $r0 = <java.lang.System: java.io.PrintStream out>;
-/*13*/
+        return 3;
+/*28*/
+    }
 
-        virtualinvoke $r0.<java.io.PrintStream: void println(java.lang.String)>("B:m1");
-/*13*/
+/*31*/
+    int m2()
+    {
+        B r0;
 
-        return;
-/*14*/
+        r0 := @this: B;
+
+        return 4;
+/*32*/
+    }
+
+/*35*/
+    int getSum()
+    {
+        B r0;
+        int $i2;
+
+        r0 := @this: B;
+
+        goto label1;
+
+     label1:
+        goto label2;
+
+     label2:
+        $i2 = 3 + 4;
+/*36*/
+
+        return $i2;
+/*36*/
     }
 }

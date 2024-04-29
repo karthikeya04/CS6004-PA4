@@ -3,6 +3,7 @@ import soot.*;
 import soot.javaToJimple.LocalGenerator;
 import soot.jimple.BinopExpr;
 import soot.jimple.CastExpr;
+import soot.jimple.Constant;
 import soot.jimple.Expr;
 import soot.jimple.InstanceOfExpr;
 import soot.jimple.InvokeExpr;
@@ -41,7 +42,7 @@ class MethodTransformer {
     final PatchingChain<Unit> units;
     UnitGraph unitGraph; // shouldn't be final because it changes everytime you
                          // inline a method
-    final PointsToGraph finalPtg;
+    PointsToGraph finalPtg;
     final HashMap<Unit, PointsToGraph> inGraph;
     final HashMap<Unit, PointsToGraph> outGraph;
     private HashSet<Unit> workList;
@@ -57,7 +58,6 @@ class MethodTransformer {
         unitGraph = new BriefUnitGraph(body);
         inGraph = new HashMap<Unit, PointsToGraph>();
         outGraph = new HashMap<Unit, PointsToGraph>();
-        finalPtg = new PointsToGraph();
         liveLocals = new SimpleLiveLocals(unitGraph);
         nonReplaceableObjs = new HashSet<String>();
         String className = method.getDeclaringClass().getName();
@@ -67,7 +67,21 @@ class MethodTransformer {
 
     public void Transform() {
         System.out.println("Analyzing method: " + method.toString());
+        RunPointsToAnalysis();
+        // System.out.println(body);
+        DoScalarReplacement();
+        // System.out.println(body);
+    }
+
+    private void RunPointsToAnalysis() {
         workList = new HashSet<Unit>(units);
+        unitGraph = new BriefUnitGraph(body);
+        for (Unit u : inGraph.keySet()) {
+            inGraph.put(u, new PointsToGraph());
+        }
+        for (Unit u : outGraph.keySet()) {
+            outGraph.put(u, new PointsToGraph());
+        }
         while (!workList.isEmpty()) {
             Unit u = workList.iterator().next();
             workList.remove(u);
@@ -89,13 +103,11 @@ class MethodTransformer {
                 }
             }
         }
+        finalPtg = new PointsToGraph();
         for (Unit u : unitGraph.getTails()) {
             finalPtg.Union(outGraph.get(u));
         }
-        DoScalarReplacement();
-        System.out.println(method.getActiveBody());
     }
-
     private void ProcessUnit(Unit u, HashMap<Unit, PointsToGraph> inGraph,
         HashMap<Unit, PointsToGraph> outGraph) {
         // System.out.println(u.getClass().getName() + " "
@@ -346,23 +358,8 @@ class MethodTransformer {
             if (tu instanceof JReturnStmt) {
                 JReturnStmt jReturnStmt = (JReturnStmt) tu;
                 Value op = jReturnStmt.getOp();
-                if (op instanceof Local) {
-                    Local retLocal = localsMapping.get(op.toString());
-                    Unit endUnit;
-                    if (u instanceof JAssignStmt) {
-                        JAssignStmt jAssignStmt = (JAssignStmt) u;
-                        Value leftOp = jAssignStmt.getLeftOp();
-                        endUnit = Jimple.v().newAssignStmt(leftOp, retLocal);
-                        newUnits.add(endUnit);
-                        newUnits.add(Jimple.v().newGotoStmt(uSucc));
-                    } else {
-                        endUnit = Jimple.v().newGotoStmt(uSucc);
-                        newUnits.add(endUnit);
-                    }
-                    retUnitsMapping.put(tu, endUnit);
-                } else if (op
-                    instanceof JInstanceFieldRef) { // TODO: handle "return
-                                                    // $r0.f" cases
+                if (op instanceof JInstanceFieldRef) { // TODO: handle "return
+                                                       // $r0.f" cases
                     JInstanceFieldRef jInstanceFieldRef =
                         (JInstanceFieldRef) op;
                     Unit endUnit;
@@ -379,6 +376,33 @@ class MethodTransformer {
                         newUnits.add(Jimple.v().newAssignStmt(leftOp, nlocal));
                     }
                     newUnits.add(Jimple.v().newGotoStmt(uSucc));
+                    retUnitsMapping.put(tu, endUnit);
+                } else if (op instanceof Local) {
+                    Local retLocal = localsMapping.get(op.toString());
+                    Unit endUnit;
+                    if (u instanceof JAssignStmt) {
+                        JAssignStmt jAssignStmt = (JAssignStmt) u;
+                        Value leftOp = jAssignStmt.getLeftOp();
+                        endUnit = Jimple.v().newAssignStmt(leftOp, retLocal);
+                        newUnits.add(endUnit);
+                        newUnits.add(Jimple.v().newGotoStmt(uSucc));
+                    } else {
+                        endUnit = Jimple.v().newGotoStmt(uSucc);
+                        newUnits.add(endUnit);
+                    }
+                    retUnitsMapping.put(tu, endUnit);
+                } else if (op instanceof Constant) {
+                    Unit endUnit;
+                    if (u instanceof JAssignStmt) {
+                        JAssignStmt jAssignStmt = (JAssignStmt) u;
+                        Value leftOp = jAssignStmt.getLeftOp();
+                        endUnit = Jimple.v().newAssignStmt(leftOp, op);
+                        newUnits.add(endUnit);
+                        newUnits.add(Jimple.v().newGotoStmt(uSucc));
+                    } else {
+                        endUnit = Jimple.v().newGotoStmt(uSucc);
+                        newUnits.add(endUnit);
+                    }
                     retUnitsMapping.put(tu, endUnit);
                 }
             } else if (tu instanceof JReturnVoidStmt) {
@@ -578,6 +602,7 @@ class MethodTransformer {
 
         for (String node : allHeapNodes) {
             if (!nonReplaceableObjs.contains(node)) {
+                // System.out.println(node);
                 ScalarReplace(node);
             }
         }
@@ -629,6 +654,7 @@ class MethodTransformer {
             }
         }
         Unit constrUnit = unitItr.next();
+        // System.out.println(constrUnit);
         JInvokeStmt cInvokeStmt = (JInvokeStmt) constrUnit;
         JSpecialInvokeExpr cInvokeExpr =
             (JSpecialInvokeExpr) cInvokeStmt.getInvokeExpr();
@@ -641,13 +667,20 @@ class MethodTransformer {
             AnalysisTransformer.ConstrAnalyses.put(
                 targetMethod.toString(), analysis);
         }
+        // System.out.println(body);
         inlineMethod(constrUnit, targetMethod);
+
+        // System.out.println(constrUnit);
+        // System.out.println(body);
+        RunPointsToAnalysis();
         HashMap<String, Local> fieldMapping = new HashMap<String, Local>();
         for (SootField field : sootClass.getFields()) {
             Local fLocal = getNewLocal(field.getType());
             fieldMapping.put(field.toString(), fLocal);
         }
         List<Unit> toRemove = new ArrayList<Unit>();
+        // replacement
+        // System.out.println(node);
         for (Unit u : units) {
             if (u instanceof JAssignStmt) {
                 JAssignStmt jAssignStmt = (JAssignStmt) u;
@@ -736,8 +769,11 @@ class MethodTransformer {
         Value value, Unit u, String node, HashMap<String, Local> fieldMapping) {
         if (value instanceof JInstanceFieldRef) {
             JInstanceFieldRef jInstanceFieldRef = (JInstanceFieldRef) value;
+            // System.out.println(u);
+            // System.out.println(inGraph.keySet());
+            Value base = jInstanceFieldRef.getBase();
             HashSet<String> objs =
-                inGraph.get(u).GetAllPointsToNodes(value, u, true);
+                inGraph.get(u).GetAllPointsToNodes(base, u, false);
             if (objs.size() == 1) {
                 String obj = objs.iterator().next();
                 if (obj.equals(node)) {
@@ -853,7 +889,7 @@ class ConstructorTransformer {
         // System.out.println(u + " " + method);
         // System.out.println(units);
         Unit uSucc = units.getSuccOf(u);
-        System.out.println(" ------ " + uSucc);
+        // System.out.println(" ------ " + uSucc);
         HashMap<Unit, Unit> retUnitsMapping = new HashMap<Unit, Unit>();
         for (Unit tu : targetUnits) {
             if (MethodTransformer.ProcessUnitForRenaming(tu, localsMapping)) {

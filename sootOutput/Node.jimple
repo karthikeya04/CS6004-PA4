@@ -1,0 +1,18 @@
+class Node extends java.lang.Object
+{
+/*Test.java*/
+
+/*1*/
+    void <init>()
+    {
+        Node r0;
+
+        r0 := @this: Node;
+
+        specialinvoke r0.<java.lang.Object: void <init>()>();
+/*2*/
+
+        return;
+/*2*/
+    }
+}
