@@ -37,7 +37,7 @@ Exec()
     cd ../../../
 
     #TODO: print perf stats (time and #virtual invokes)
-    echo -e "\e[1;35m\n--- Perf. stats: $optflag ---\n\e[0m"
+    # echo -e "\e[1;35m\n--- Perf. stats: $optflag ---\n\e[0m"
 }
 
 # runs soot and dumps final class files in build directory
