@@ -8,6 +8,19 @@ import soot.toolkits.graph.UnitGraph;
 
 public class Main {
     public static void main(String[] args) {
+        Boolean enableOptimization = true;
+        if (args.length == 1) {
+            if (args[0].equals("--disable-opt")) {
+                enableOptimization = false;
+            } else {
+                System.out.println(
+                    "Invalid argument. Usage: java Main [--disable-opt]");
+                return;
+            }
+        } else if (args.length > 0) {
+            System.out.println("Usage: java Main [--disable-opt]");
+            return;
+        }
         String classPath = "."; // change to appropriate path to the test class
         String dir = "./testcase";
 
@@ -22,14 +35,15 @@ public class Main {
             "-process-dir", dir, // directory of classes to analyze
         };
 
-        // Create transformer for analysis
-        AnalysisTransformer analysisTransformer = new AnalysisTransformer();
+        if (enableOptimization) {
+            // Create transformer for analysis
+            AnalysisTransformer analysisTransformer = new AnalysisTransformer();
 
-        // Add transformer to appropriate pack in PackManager; PackManager will
-        // run all packs when soot.Main.main is called
-        PackManager.v().getPack("wjtp").add(
-            new Transform("wjtp.gc", analysisTransformer));
-
+            // Add transformer to appropriate pack in PackManager; PackManager
+            // will run all packs when soot.Main.main is called
+            PackManager.v().getPack("wjtp").add(
+                new Transform("wjtp.gc", analysisTransformer));
+        }
         // Call Soot's main method with arguments
         soot.Main.main(sootArgs);
     }

@@ -66,7 +66,7 @@ class MethodTransformer {
     }
 
     public void Transform() {
-        System.out.println("Analyzing method: " + method.toString());
+        // System.out.println("Analyzing method: " + method.toString());
         RunPointsToAnalysis();
         // System.out.println(body);
         DoScalarReplacement();
